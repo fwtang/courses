@@ -1,0 +1,188 @@
+---
+title: "Human Activity Recognition: Did you do it right?"
+author: "FW TANG"
+date: "20 March, 2015"
+output: html_document
+---
+
+### 1. Introduction
+
+Todate, various devices can collect a lot of data on Human Activity Recognitio. However, people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+The goal of this project is to predict whether the activity is carried out correctly by using the data collected from accelerometers on the bel, forearm, arm, and dumbell of 6 participants where they were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The "classe" field captures either "A", "B", "C", "D" or "E", where "A" indicates the correct way.
+
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har 
+
+
+### 2. Data 
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+#### 2.1 Data Preparation
+Training data and testing data are downloaded, analysed and cleaned if necessary.
+
+
+```{r, cache = F, echo = F, message = F, warning = F, tidy = F, results='hide'}
+library("knitr"); library("RCurl"); library("data.table"); library("caret")
+library("ggplot2"); library("dplyr")
+```
+
+```{r}
+train_url<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training<-read.csv(textConnection(getURL(train_url)), na.strings= c("NA", "", "#DIV/0!"))
+
+testing<-read.csv(textConnection(getURL(test_url)), na.strings= c("NA", "", "#DIV/0!"))
+```
+
+```{r, cache = F, echo = F, message = F, warning = F, tidy = F, results='hide'}
+##training<-read.csv("pml-training.csv", na.strings= c("NA", "", "#DIV/0!"))
+##testing<-read.csv("pml-testing.csv", na.strings= c("NA", "", "#DIV/0!"))
+```
+
+Take a quick look at the data. May also explore the data using excel or other tools.
+
+
+```{r, cache = F, message = F, warning = F, tidy = F, results='hide'}
+summary(training)
+```
+```{r}
+summary(training$classe)
+hist(as.integer(training$classe))
+
+```
+
+
+Remove near zero variance columns using nearZeroVar. Besides, there is quite a number of columns are filled with NA, blank and #DIV/0!, we will remove these columns. Next remove column 1 to 7 as they are fields such as running number, participants' name, date.  Apply cleaning to both training and testing data set.
+
+```{r}
+
+#Remove near zero variance using nearZeroVar from caret library
+nzv_cols = nearZeroVar(training)
+if(length(nzv_cols) > 0) training = training[, -nzv_cols]
+
+testing = testing[, -nzv_cols]
+
+training<-training[,colSums(is.na(training)) <= 0]
+testing<-testing[,colSums(is.na(testing)) <= 0]
+
+training<-training[,6:59]
+testing<-testing[,6:59]
+
+
+```
+
+
+####2.2 Data Slicing - to get training and testing data set from downloaded training set to build the model. 60% of the downloaded training set will be used as the "training data" set to build the model. 
+
+
+```{r}
+inTrain<-createDataPartition(y=training$classe,p=0.6,list=F)
+intraining<-training[inTrain,]
+intesting<-training[-inTrain,]
+```
+
+
+### 3. Build and Test the Model
+
+####3.1 An overall seed will be set so as to get the same sample used in building the model. Train control is set as well.
+
+```{r}
+#set seed 
+set.seed(12345)
+
+## set train control parameter, with cross validation and number of folds
+control<-trainControl(method = "cv", number=10)
+```
+
+
+####3.2 Build models
+
+Different models can be built to check the accuracy of the model, look for important variables and find the better model with good accuracy, moderate training time. Two methods are shown below.
+
+```{r, cache = F, message = F, warning = F, tidy = F, results='hide'}
+## do the following so that the training can be executed in parallel
+library("cluster")
+library("parallel")
+library("doSNOW")
+coreNumber=max(detectCores(),1)
+cluster=makeCluster(coreNumber, type = "SOCK",outfile="")
+registerDoSNOW(cluster)
+```
+```{r, message = F, warning = F, tidy = F, results='hide'}
+##build model using Stochastic Gradient Boosting
+GBM = train(classe~.,data=intraining,method="gbm", trControl=control, verbose=F) 
+
+##build model using random forests
+modFitRF = train(classe~., data=intraining, method = "rf", importance=T)
+```
+
+Both models show a high accuracy in training. We review the importance of variables in these two models. 
+
+```{r, echo=FALSE}
+varImp(GBM)
+GBM
+varImp(modFitRF)
+modFitRF
+```
+
+
+It is observed that there are few variables of high importance for both models. 
+Number of variables can be reduced and then train the models again. (This is not carried out as the accuracy is good without reducing the variables.)
+
+
+####3.3 Cross validate the model using the "testing" data
+
+
+Since both models are equally accurate, random forests model is applied with the cross validate "testing" data set.
+
+
+```{r}
+modTestRF<-predict(modFitRF, intesting)
+confusionMatrix(modTestRF, intesting$classe)
+```
+
+
+The out of sample accuracy is roughly 99%, which is good and ready for prediction assigment.
+
+
+#### 4.0 Prediction Assignment
+
+
+Apply the model to the assignment testing set.
+
+```{r}
+testing_anwRF<-predict(modFitRF, testing)
+
+```
+
+
+Output the answers for submission and 100% accurancy is achieved for the prediction assignment.
+
+
+```{r, echo=FALSE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(testing_anwRF)
+```
+
+
+### 5.0 Conclusion
+
+Non linear models are accurate but may take a longer time to train the model. Train control and more tuning may be necessary to improve the performance in training non linear models.
